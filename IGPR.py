@@ -66,7 +66,7 @@ class BIGPR(object):
 
 
     def learn(self, new_x, new_y):
-        # self.delta = deque(np.array(self.delta) * self.lamda)
+        self.delta = deque(np.array(self.delta) * self.lamda)
 
         if not self.is_available():
             self.kernel_x.append(new_x)
@@ -81,11 +81,12 @@ class BIGPR(object):
             # call the same as the batch method because more optimized and gives same result
             self.aug_update_SE_kernel(new_x, new_y)
             self.remove_kernel_samples(1)
+            # OLD WAY -> slightly less efficient
             # self.sub_kernel_sample(new_x, new_y)
             
 
     def learn_batch(self, new_xs, new_ys):
-        # self.delta = deque(np.array(self.delta) * self.lamda)
+        self.delta = deque(np.array(self.delta) * self.lamda)
 
         if not self.is_available():
             self.kernel_x.extend(new_xs)
@@ -444,23 +445,24 @@ class BIGPR(object):
         for i in range(amount):
             info_max_idxs = np.array([inforow[0] for inforow in infomat])        #infomat already sorted
             info_max_vals = kmat[np.arange(len(info_max_idxs)), info_max_idxs]
+            
+            # filter by max correlation
             info_argmaxs = np.argwhere(info_max_vals == np.amax(info_max_vals)).flatten()
             max_correlation_idxs = np.unique((info_max_idxs[info_argmaxs], info_argmaxs))    # info[argmaxs] are the simmetric indices (not always present in argmaxs since infomat is "diagonal", deque of arrays)
 
-            #####  HERE IDX_TOREMOVE IS A LIST OF MAX CORRELATED SAMPLES
-            #####  NOW WE NEED TO CHOOSE THE WORST IN TERMS OF DELTA
-
+            # filter by worse delta
             max_delta_idxs = np.argwhere(delta[info_argmaxs] == np.amax(delta[info_argmaxs])).flatten()
 
-            ##### NOW WE HAVE THE ONE TO BE REMOVED, APPLY REMOVING AND REITERATE
+            # filter by oldest (highest index)
             kill = np.sort(info_argmaxs[max_delta_idxs].flatten())[-1]      # if more than one, remove newest
             kill_list.append(kill)
 
-            #remove `kill` from infomat, recompute info at the beginning
+            # UPDATE infomat, delta, kmat
+            #remove `kill` from  infomat , recompute  info  at the beginning of the loop
             infomat = np.delete(infomat, kill)
             for i in range(len(infomat)): 
                 infomat[i]=np.delete(infomat[i], np.where(np.isin(infomat[i], kill)))
-                infomat[i][infomat[i] > kill]-=1
+                infomat[i][infomat[i] > kill]-=1        # adjust indices numbers
             delta -= kmat[kill, :]
             delta = np.delete(delta, kill)
             kmat = np.delete(kmat, kill, axis=0)
@@ -469,13 +471,11 @@ class BIGPR(object):
 
         #kill stuff
         kill_list = np.sort(kill_list)[::-1]
-        # self.kernel_x = deque(np.delete(np.array(self.kernel_x), kill_list, axis=0)) 
-        # self.kernel_y = deque(np.delete(np.array(self.kernel_y), kill_list, axis=0))
-        # kmat = np.delete(kmat, kill_list, axis=0)
-        # kmat = np.delete(kmat, kill_list, axis=1)
         for kill in kill_list:
             del self.kernel_x[kill]
             del self.kernel_y[kill]
+
+            #TODO: perform matrix_inverse_remove with many indices at once
             self.inv_k_matrix = matrix_inverse_remove_i(self.inv_k_matrix, kill)
 
         self.samples_substituted_count += len(kill_list)
@@ -483,7 +483,9 @@ class BIGPR(object):
 
         # update info mat -> upon removal, compute from scratch
         self.k_matrix = kmat
-        self.info_mat = self.compute_info_mat(kmat)
+        # self.info_mat = self.compute_info_mat(kmat)
+        # infomat doesn't need to be recomputed
+        self.info_mat = deque(infomat)
         self.delta = deque(delta)
 
         assert len(self.kernel_x) == len(self.kernel_y) == self.k_matrix.shape[0] == self.k_matrix.shape[1] == self.inv_k_matrix.shape[0] == self.inv_k_matrix.shape[1]
