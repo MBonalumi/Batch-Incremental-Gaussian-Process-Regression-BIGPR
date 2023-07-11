@@ -109,7 +109,9 @@ class BIGPR(object):
             self.batch_aug_update_SE_kernel(new_xs, new_ys)
 
         elif len(self.kernel_x) + len(new_xs) >= self.max_k_matrix_size:
-            
+            new_xs, new_ys, _, _ = self.screen_new_samples(new_xs, new_ys)
+            if len(new_xs) == 0:
+                return
 
             # otherwise, if matrix not maxxed, but will be after adding new_xs
             # add new_xs but only remove a smaller amt
@@ -251,22 +253,58 @@ class BIGPR(object):
         self.info_mat.append(new_info_row)
 
 
-    def evaluate_new_xs(self, new_xs):
+    def screen_new_samples(self, new_xs, new_ys):
+        xs = new_xs.copy()
+        ys = new_ys.copy()
         k_x = np.array(self.kernel_x)
 
         # calculate new submatrix (i.e. new_xs kernel)
-        new_k_matrix, _, _ = self.calculate_SE_kernel(kernel_x=new_xs, return_values=True)
+        new_k_matrix, _, new_infomat = self.calculate_SE_kernel(kernel_x=xs, return_values=True)
 
-        new_k_info = self.compute_info_mat(new_k_matrix)
-        max_new_k_info = np.sort( np.array([new_k_info[i][0] for i in range(len(new_k_info))]) )[::-1]
+        new_infomat_maxidx = np.array([new_infomat[i][0] for i in range(len(new_infomat))])
+        new_infomat_maxval = new_k_matrix[np.arange(len(new_infomat)), new_infomat_maxidx]
+
+        killed_idxs = []
+
+        while xs.shape[0] > 1 and new_infomat_maxval.max() >= 0.95: #dont even bother adding if informativity is too high (0.95 but it could be even 0.8)
+            kill = np.sort( new_infomat_maxidx[np.where(new_infomat_maxval == new_infomat_maxval.max())] )[::-1][0]
+            killed_idxs.append(kill)
+            new_k_matrix = np.delete(new_k_matrix, kill, axis=0)
+            new_k_matrix = np.delete(new_k_matrix, kill, axis=1)
+            new_infomat = self.compute_info_mat(new_k_matrix)
+            xs = np.delete(xs, kill, axis=0)
+            ys = np.delete(ys, kill, axis=0)
+
+            new_infomat_maxidx = np.array([new_infomat[i][0] for i in range(len(new_infomat))])
+            new_infomat_maxval = new_k_matrix[np.arange(len(new_infomat)), new_infomat_maxidx]
+
+        # print worst self.info_mat values, in amount as xs.shape[0]
+        self_infomat_maxidx = np.array([self.info_mat[i][0] for i in range(len(self.info_mat))])
+        self_infomat_maxval = self.k_matrix[np.arange(len(self.info_mat)), self_infomat_maxidx]
+        self_killable_val = np.sort(self_infomat_maxval)[:xs.shape[0]]
+        # self_killable_idx = self_infomat_maxidx[np.argsort(self_infomat_maxval)[:xs.shape[0]]]
 
         # calculate rectangular matrix -> informativity
-        new_rows = np.array([np.sum(np.square(k_x - new_x), axis=1) for new_x in new_xs])
-        new_rows /= (-2 * self.hyperparam.len * self.hyperparam.len)
-        new_rows = np.exp(new_rows)
-        new_rows *= self.hyperparam.theta_f * self.hyperparam.theta_f
+        xs_info = []
+        for i,x in enumerate(xs):
+            row = np.sum(np.square(k_x - x), axis=1) / (-2 * self.hyperparam.len * self.hyperparam.len)
+            row = np.exp(row) * self.hyperparam.theta_f * self.hyperparam.theta_f
+            worst_i = np.argsort(row)[::-1][0]
+            xs_info.append(row[worst_i])
 
-        
+        dont_add = []
+
+        for i in np.argsort(xs_info):
+            if xs_info[i] > self_killable_val[-1]:
+                dont_add.append(i)
+            else:
+                self_killable_val[-1] = xs_info[i]
+                self_killable_val = np.sort(self_killable_val)
+
+        xs = np.delete(xs, dont_add, axis=0)
+        ys = np.delete(ys, dont_add, axis=0)
+
+        return xs, ys, killed_idxs, dont_add
 
 
     def batch_aug_update_SE_kernel(self, new_xs, new_ys):
@@ -438,7 +476,7 @@ class BIGPR(object):
         self.k_matrix = new_k_matrix
 
 
-    def remove_kernel_samples(self, amount):
+    def remove_kernel_samples(self, amount, infomat=None, kmat=None, delta=None):
         '''
         removes an amount of samples from the kernel,
         so to make the kernel size back to its maximum size when exceeding
@@ -458,12 +496,17 @@ class BIGPR(object):
                 - self.inv_k_matrix[:, i]
                 - self.delta[i]
         '''
-        if amount==0:
+        if amount<=0:
             return
-
-        infomat = np.array(self.info_mat, dtype=object)
-        kmat = np.array(self.k_matrix)
-        delta = np.array(self.delta)
+        
+        FLAG_work_on_self = False
+        if (infomat, kmat, delta) == (None, None, None):
+            FLAG_work_on_self = True
+            infomat = np.array(self.info_mat, dtype=object)
+            kmat = np.array(self.k_matrix)
+            delta = np.array(self.delta)
+        elif infomat is None or kmat is None or delta is None:
+            raise ValueError('infomat, kmat and delta must be all None or all not None')
 
         kill_list = []
 
@@ -501,30 +544,34 @@ class BIGPR(object):
         kmat = np.delete(kmat, kill_list, axis=1)
         infomat = np.delete(infomat, kill_list, axis=0)
         delta = np.delete(delta, kill_list)
-            #TODO: perform matrix_inverse_remove with many indices at once
-        self.inv_k_matrix = matrix_inverse_remove_indices(self.inv_k_matrix, kill_list)
-        
-        for kill in kill_list:
-            del self.kernel_x[kill]
-            del self.kernel_y[kill]
-            for i in range(len(infomat)): 
-                # if i delete idx 1000, idx 1001 will become 1000, etc...
-                infomat[i][infomat[i] > kill]-=1        # adjust indices numbers
 
-        self.samples_substituted_count += len(kill_list)
-        self.samples_substituted.append(kill_list)
+        if FLAG_work_on_self:
+                #TODO: perform matrix_inverse_remove with many indices at once
+            self.inv_k_matrix = matrix_inverse_remove_indices(self.inv_k_matrix, kill_list)
+            
+            for kill in kill_list:
+                del self.kernel_x[kill]
+                del self.kernel_y[kill]
+                for i in range(len(infomat)): 
+                    # if i delete idx 1000, idx 1001 will become 1000, etc...
+                    infomat[i][infomat[i] > kill]-=1        # adjust indices numbers
 
-        # update info mat -> upon removal, compute from scratch
-        self.k_matrix = kmat
-        # self.info_mat = self.compute_info_mat(kmat)
-        # infomat doesn't need to be recomputed
-        self.info_mat = deque(infomat)
-        self.delta = deque(delta)
+            self.samples_substituted_count += len(kill_list)
+            self.samples_substituted.append(kill_list)
 
-        # assert np.allclose( np.abs(np.rint(np.matmul(self.k_matrix, self.inv_k_matrix))), np.eye(len(self.k_matrix)) )
+            # update info mat -> upon removal, compute from scratch
+            self.k_matrix = kmat
+            # self.info_mat = self.compute_info_mat(kmat)
+            # infomat doesn't need to be recomputed
+            self.info_mat = deque(infomat)
+            self.delta = deque(delta)
 
-        assert len(self.kernel_x) == len(self.kernel_y) == self.k_matrix.shape[0] == self.k_matrix.shape[1] == self.inv_k_matrix.shape[0] == self.inv_k_matrix.shape[1] == len(self.delta) == len(self.info_mat) == self.max_k_matrix_size,\
-            "not all kernel structures have the same size after removal"
+            # assert np.allclose( np.abs(np.rint(np.matmul(self.k_matrix, self.inv_k_matrix))), np.eye(len(self.k_matrix)) )
+
+            assert len(self.kernel_x) == len(self.kernel_y) == self.k_matrix.shape[0] == self.k_matrix.shape[1] == self.inv_k_matrix.shape[0] == self.inv_k_matrix.shape[1] == len(self.delta) == len(self.info_mat) == self.max_k_matrix_size,\
+                "not all kernel structures have the same size after removal"
+        else:
+            return np.array(kill_list), infomat, kmat, delta
 
     def count_delta(self, new_x):
         '''
