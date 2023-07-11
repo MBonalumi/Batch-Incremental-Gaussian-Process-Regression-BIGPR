@@ -5,8 +5,6 @@ The forked implementation missed many optimizations opportunities (as I'm sure m
 
 Here we add support for batchly update the kernel matrix, and also a couple algorithms to avoid recompute the inverse, that gain much time.
 
-Any pull request helping solve the "matrix_inverse_remove_indices", i.e. computing inverse kernel matrix upon removal of many indices in one single time from kernle matrix.
-
 ---
 
 Refer to this book: Rasmussen, Carl Edward. "Gaussian processes in machine learning." Summer School on Machine Learning. Springer, Berlin, Heidelberg, 2003.   
