@@ -30,9 +30,9 @@ igpr_batch = BIGPR(training_set[0, :], training_target[0, :])
 #       TUNE THESE
 # ========================
 batch_dim = 30
-data_len = 1000
+data_len = 3000
 data_batches = int( np.ceil(data_len/batch_dim) )
-max_kmat_size = 900
+max_kmat_size = 3000
 
 igpr.max_k_matrix_size  = max_kmat_size
 igpr_batch.max_k_matrix_size = max_kmat_size

@@ -111,44 +111,37 @@ def matrix_inverse_remove_indices(A, i_s):
 
     # order i_s in descending order
     assert len(i_s) > 0, "i_s must be a non-empty list"
-    i_s = np.concatenate((i_s, [n]))
-    i_s = np.sort(i_s)[::-1]
+    i_s = np.sort(np.array(i_s))[::-1]
 
     # call x_s all As indices
-    x_s = np.arange(n)
+    x_s = np.arange(A.shape[0])
+    adj_v = np.zeros(len(x_s), np.int32)
 
-    cd_stack = []
+    swap = -1
+    for i in i_s:
+        x_s[[i, swap]] = x_s[[swap, i]]
+        swap -= 1
 
-    # start np.rolls
-    for h in range(1, len(i_s)):
-        roll_amt = i_s[h-1] - i_s[h]
-        x_s = np.roll(x_s, roll_amt-1)  # -1 because one already done by removing the last element
+    A[:, :] = A[x_s, :]
+    A[:, :] = A[:, x_s]
 
-        # rotate A
-        A[:, :] = A[x_s, :]
-        A[:, :] = A[:, x_s]
+    amt = i_s.shape[0]
+    a = A[:-amt, :-amt]
+    b = A[:-amt, -amt:]
+    c = A[-amt:, :-amt]
+    d = A[-amt:, -amt:]
 
-        #pop last element
-        last = x_s[-1]
-        x_s = x_s[:-1]
-        x_s[x_s > last] -= 1
+    dinv = np.linalg.inv(d)
 
-        # stack with old ones
-        cd_stack.append(A[:, -1])
-        A = A[:-1, :-1]
+    result = a - np.matmul(b, np.matmul(dinv, c))
 
-    # # back in place
-    # x_s = np.roll(x_s, i_s[-1])
-    
-    c_size = cd_stack[-1].shape[0]-1
-    c = np.vstack([bd[:c_size] for bd in cd_stack[::-1]])
-    
-    d = np.zeros((n-c_size, n-c_size), dtype=np.int32)
-    for j in range(len(cd_stack)):
-        data_amt = cd_stack[-j-1][c_size:].shape[0]
-        d[j, :data_amt] = cd_stack[-j-1][c_size:]
-        d[:, j] = d[j, :]
+    for i in i_s:
+        adj_v[x_s > i] += 1
 
-    d = np.linalg.inv(d)
-    b = c.T
-    return A - np.matmul(b, np.matmul(d, c))
+    x_s-=adj_v
+    x_s = x_s[:-amt]
+
+    result[x_s,:] = result[np.arange(result.shape[0]), :]
+    result[:,x_s] = result[:, np.arange(result.shape[0])]
+
+    return result

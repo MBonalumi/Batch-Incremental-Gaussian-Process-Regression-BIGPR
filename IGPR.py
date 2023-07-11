@@ -5,7 +5,7 @@ from collections import deque
 import random
 import time
 from matrix_block_inversion import matrix_block_inversion
-from matrix_inverse_remove import matrix_inverse_remove_i
+from matrix_inverse_remove import matrix_inverse_remove_i, matrix_inverse_remove_indices
 
 class HyperParam(object):
     def __init__(self, theta_f=1, len=1, theta_n=0.1):
@@ -436,6 +436,9 @@ class BIGPR(object):
                 - self.inv_k_matrix[:, i]
                 - self.delta[i]
         '''
+        if amount==0:
+            return
+
         infomat = np.array(self.info_mat, dtype=object)
         kmat = np.array(self.k_matrix)
         delta = np.array(self.delta)
@@ -447,26 +450,26 @@ class BIGPR(object):
             info_max_vals = kmat[np.arange(len(info_max_idxs)), info_max_idxs]
             
             # filter by max correlation
-            info_argmaxs = np.argwhere(info_max_vals == np.amax(info_max_vals)).flatten()
-            max_correlation_idxs = np.unique((info_max_idxs[info_argmaxs], info_argmaxs))    # info[argmaxs] are the simmetric indices (not always present in argmaxs since infomat is "diagonal", deque of arrays)
+            max_correlation_idxs = np.argwhere(info_max_vals == np.amax(info_max_vals)).flatten()
+            max_correlation_idxs = np.unique((info_max_idxs[max_correlation_idxs], max_correlation_idxs))    # info[argmaxs] are the simmetric indices (not always present in argmaxs since infomat is "diagonal", deque of arrays)
 
             # filter by worse delta
-            max_delta_idxs = np.argwhere(delta[info_argmaxs] == np.amax(delta[info_argmaxs])).flatten()
+            max_delta_idxs = np.argwhere(delta[max_correlation_idxs] == np.amax(delta[max_correlation_idxs])).flatten()
 
             # filter by oldest (highest index)
-            kill = np.sort(info_argmaxs[max_delta_idxs].flatten())[-1]      # if more than one, remove newest
+            kill = np.sort(max_correlation_idxs[max_delta_idxs].flatten())[-1]      # if more than one, remove newest
             kill_list.append(kill)
 
             # UPDATE infomat, delta, kmat
             #remove `kill` from  infomat , recompute  info  at the beginning of the loop
-            infomat = np.delete(infomat, kill)
+            infomat[kill] = np.zeros(len(infomat[kill]), dtype=np.int32)
             for i in range(len(infomat)): 
                 infomat[i]=np.delete(infomat[i], np.where(np.isin(infomat[i], kill)))
-                infomat[i][infomat[i] > kill]-=1        # adjust indices numbers
+                # infomat[i][infomat[i] > kill]-=1        # adjust indices numbers
             delta -= kmat[kill, :]
-            delta = np.delete(delta, kill)
-            kmat = np.delete(kmat, kill, axis=0)
-            kmat = np.delete(kmat, kill, axis=1)
+            # delta = np.delete(delta, kill)
+            # kmat = np.delete(kmat, kill, axis=0)
+            # kmat = np.delete(kmat, kill, axis=1)
 
 
         #kill stuff
@@ -475,8 +478,12 @@ class BIGPR(object):
             del self.kernel_x[kill]
             del self.kernel_y[kill]
 
+        kmat = np.delete(kmat, kill_list, axis=0)
+        kmat = np.delete(kmat, kill_list, axis=1)
+        infomat = np.delete(infomat, kill_list, axis=0)
+        delta = np.delete(delta, kill_list)
             #TODO: perform matrix_inverse_remove with many indices at once
-            self.inv_k_matrix = matrix_inverse_remove_i(self.inv_k_matrix, kill)
+        self.inv_k_matrix = matrix_inverse_remove_indices(self.inv_k_matrix, kill_list)
 
         self.samples_substituted_count += len(kill_list)
         self.samples_substituted.append(kill_list)
@@ -488,7 +495,10 @@ class BIGPR(object):
         self.info_mat = deque(infomat)
         self.delta = deque(delta)
 
-        assert len(self.kernel_x) == len(self.kernel_y) == self.k_matrix.shape[0] == self.k_matrix.shape[1] == self.inv_k_matrix.shape[0] == self.inv_k_matrix.shape[1]
+        assert np.allclose( np.abs(np.rint(np.matmul(self.k_matrix, self.inv_k_matrix))), np.eye(len(self.k_matrix)) )
+
+        assert len(self.kernel_x) == len(self.kernel_y) == self.k_matrix.shape[0] == self.k_matrix.shape[1] == self.inv_k_matrix.shape[0] == self.inv_k_matrix.shape[1] == len(self.delta) == len(self.info_mat) == self.max_k_matrix_size,\
+            "not all kernel structures have the same size after removal"
 
     def count_delta(self, new_x):
         '''
