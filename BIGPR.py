@@ -98,16 +98,19 @@ class BIGPR(object):
             if len(self.kernel_x) > self.max_k_matrix_size:
                 self.remove_kernel_samples( len(self.kernel_x) - self.max_k_matrix_size )
 
-        elif len(self.kernel_x) == self.max_k_matrix_size:
-            # if matrix already maxxed, update for amt=new_xs.shape[0]
-            self.batch_aug_update_SE_kernel(new_xs, new_ys)
-            self.remove_kernel_samples(new_xs.shape[0])
+        # contained in last elif
+        # elif len(self.kernel_x) == self.max_k_matrix_size:
+        #     # if matrix already maxxed, update for amt=new_xs.shape[0]
+        #     self.batch_aug_update_SE_kernel(new_xs, new_ys)
+        #     self.remove_kernel_samples(new_xs.shape[0])
 
         elif len(self.kernel_x) + len(new_xs) < self.max_k_matrix_size:
             # if matrix + new_xs not maxxed yet, insert new samples
             self.batch_aug_update_SE_kernel(new_xs, new_ys)
 
         elif len(self.kernel_x) + len(new_xs) >= self.max_k_matrix_size:
+            
+
             # otherwise, if matrix not maxxed, but will be after adding new_xs
             # add new_xs but only remove a smaller amt
             # using this formula:
@@ -246,6 +249,24 @@ class BIGPR(object):
         row[n] = 0
         new_info_row = np.argsort(row)[::-1]
         self.info_mat.append(new_info_row)
+
+
+    def evaluate_new_xs(self, new_xs):
+        k_x = np.array(self.kernel_x)
+
+        # calculate new submatrix (i.e. new_xs kernel)
+        new_k_matrix, _, _ = self.calculate_SE_kernel(kernel_x=new_xs, return_values=True)
+
+        new_k_info = self.compute_info_mat(new_k_matrix)
+        max_new_k_info = np.sort( np.array([new_k_info[i][0] for i in range(len(new_k_info))]) )[::-1]
+
+        # calculate rectangular matrix -> informativity
+        new_rows = np.array([np.sum(np.square(k_x - new_x), axis=1) for new_x in new_xs])
+        new_rows /= (-2 * self.hyperparam.len * self.hyperparam.len)
+        new_rows = np.exp(new_rows)
+        new_rows *= self.hyperparam.theta_f * self.hyperparam.theta_f
+
+        
 
 
     def batch_aug_update_SE_kernel(self, new_xs, new_ys):
