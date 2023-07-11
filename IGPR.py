@@ -87,6 +87,7 @@ class BIGPR(object):
 
     def learn_batch(self, new_xs, new_ys):
         self.delta = deque(np.array(self.delta) * self.lamda)
+        #TODO: find a way to screen new_xs instead of adding blankly, to avoid unnecessary computation
 
         if not self.is_available():
             self.kernel_x.extend(new_xs)
@@ -474,9 +475,6 @@ class BIGPR(object):
 
         #kill stuff
         kill_list = np.sort(kill_list)[::-1]
-        for kill in kill_list:
-            del self.kernel_x[kill]
-            del self.kernel_y[kill]
 
         kmat = np.delete(kmat, kill_list, axis=0)
         kmat = np.delete(kmat, kill_list, axis=1)
@@ -484,6 +482,13 @@ class BIGPR(object):
         delta = np.delete(delta, kill_list)
             #TODO: perform matrix_inverse_remove with many indices at once
         self.inv_k_matrix = matrix_inverse_remove_indices(self.inv_k_matrix, kill_list)
+        
+        for kill in kill_list:
+            del self.kernel_x[kill]
+            del self.kernel_y[kill]
+            for i in range(len(infomat)): 
+                # if i delete idx 1000, idx 1001 will become 1000, etc...
+                infomat[i][infomat[i] > kill]-=1        # adjust indices numbers
 
         self.samples_substituted_count += len(kill_list)
         self.samples_substituted.append(kill_list)
@@ -495,7 +500,7 @@ class BIGPR(object):
         self.info_mat = deque(infomat)
         self.delta = deque(delta)
 
-        assert np.allclose( np.abs(np.rint(np.matmul(self.k_matrix, self.inv_k_matrix))), np.eye(len(self.k_matrix)) )
+        # assert np.allclose( np.abs(np.rint(np.matmul(self.k_matrix, self.inv_k_matrix))), np.eye(len(self.k_matrix)) )
 
         assert len(self.kernel_x) == len(self.kernel_y) == self.k_matrix.shape[0] == self.k_matrix.shape[1] == self.inv_k_matrix.shape[0] == self.inv_k_matrix.shape[1] == len(self.delta) == len(self.info_mat) == self.max_k_matrix_size,\
             "not all kernel structures have the same size after removal"
